@@ -1,8 +1,31 @@
++220
+-84
+
 import tkinter as tk
 from tkinter import ttk, messagebox
 import pandas as pd
 from datetime import datetime
 import os
+import json
+import smtplib
+from email.message import EmailMessage
+
+# Arquivo contendo as configuracoes de e-mail
+EMAIL_CONFIG_FILE = "config.json"
+
+def carregar_dados_email():
+    """L\u00ea o arquivo JSON com os dados de e-mail."""
+    if not os.path.exists(EMAIL_CONFIG_FILE):
+        messagebox.showerror(
+            "Erro", f"Arquivo {EMAIL_CONFIG_FILE} n\u00e3o encontrado."
+        )
+        return None
+    try:
+        with open(EMAIL_CONFIG_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception as exc:
+        messagebox.showerror("Erro", f"Falha ao ler configura\u00e7\u00f5es: {exc}")
+        return None
 
 class PedidoDB:
     """Camada simples de persistência usando arquivo Excel."""
@@ -130,6 +153,58 @@ def visualizar_pedidos():
     nova_janela.grid_rowconfigure(0, weight=1)
     nova_janela.grid_columnconfigure(0, weight=1)
 
+def enviar_email(caminho: str) -> None:
+    """Envia o arquivo informado por e-mail."""
+    config = carregar_dados_email()
+    if not config:
+        return
+    msg = EmailMessage()
+    msg["Subject"] = "Relat\u00f3rio de Pedidos do Dia"
+    msg["From"] = config.get("EMAIL_REMETENTE")
+    msg["To"] = config.get("EMAIL_DESTINO")
+    msg.set_content("Segue em anexo o relat\u00f3rio de pedidos do dia.")
+    with open(caminho, "rb") as f:
+        conteudo = f.read()
+        msg.add_attachment(
+            conteudo,
+            maintype="application",
+            subtype="vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            filename=os.path.basename(caminho),
+        )
+    smtp_servidor = config.get("SMTP_SERVIDOR", "smtp.gmail.com")
+    smtp_porta = config.get("SMTP_PORTA", 587)
+    try:
+        with smtplib.SMTP(smtp_servidor, smtp_porta) as server:
+            server.starttls()
+            server.login(config.get("EMAIL_REMETENTE"), config.get("EMAIL_SENHA"))
+            server.send_message(msg)
+        messagebox.showinfo("Sucesso", "Relat\u00f3rio enviado por e-mail.")
+    except Exception as exc:
+        messagebox.showerror("Erro", f"Falha ao enviar e-mail: {exc}")
+
+def gerar_relatorio():
+    df = db.carregar()
+    if df.empty:
+        messagebox.showinfo("Informa\u00e7\u00e3o", "Nenhum pedido cadastrado ainda.")
+        return
+    df["DataPedido"] = pd.to_datetime(df["Data"], dayfirst=True).dt.date
+    hoje = datetime.now().date()
+    df_hoje = df[df["DataPedido"] == hoje].drop(columns=["DataPedido"])
+    if df_hoje.empty:
+        messagebox.showinfo(
+            "Informa\u00e7\u00e3o", "Nenhum pedido registrado para o dia de hoje."
+        )
+        return
+    pasta = "relatorios"
+    os.makedirs(pasta, exist_ok=True)
+    nome_arquivo = f"relatorio_{hoje.strftime('%d-%m-%Y')}.xlsx"
+    caminho = os.path.join(pasta, nome_arquivo)
+    df_hoje.to_excel(caminho, index=False)
+    enviar_email(caminho)
+    messagebox.showinfo(
+        "Sucesso", f"Relat\u00f3rio gerado e salvo em {caminho}."
+    )
+
 root = tk.Tk()
 root.title('Sistema de Controle de Pedidos')
 root.geometry('420x300')
@@ -166,6 +241,7 @@ frame_botoes = ttk.Frame(root, padding=10)
 frame_botoes.grid(row=1, column=0)
 ttk.Button(frame_botoes, text='Cadastrar Pedido', command=cadastrar_pedido).grid(row=0, column=0, padx=5)
 ttk.Button(frame_botoes, text='Visualizar Pedidos', command=visualizar_pedidos).grid(row=0, column=1, padx=5)
+ttk.Button(frame_botoes, text='Gerar Relat\u00f3rio', command=gerar_relatorio).grid(row=0, column=2, padx=5)
 root.grid_rowconfigure(0, weight=1)
 root.grid_columnconfigure(0, weight=1)
 root.mainloop()
