@@ -1,3 +1,4 @@
+# TODA HONRA E GLÓRIA AO SENHOR JESUS CRISTO 
 import tkinter as tk
 from tkinter import messagebox, ttk
 import customtkinter as ctk
@@ -7,8 +8,58 @@ import os
 import json
 import smtplib
 from email.message import EmailMessage
+import requests
+
+# Arquivo contendo as configuracoes de e-mail
+EMAIL_CONFIG_FILE = "config.json"
+
+def carregar_dados_email():
+    if not os.path.exists(EMAIL_CONFIG_FILE):
+        messagebox.showerror(
+            "Erro", f"Arquivo {EMAIL_CONFIG_FILE} não encontrado."
+        )
+        return None
+    try:
+        with open(EMAIL_CONFIG_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception as exc:
+        messagebox.showerror("Erro", f"Falha ao ler configurações: {exc}")
+        return None
 
 ARQUIVO_PRODUTOS = "produtos.json"
+
+def carregar_config():
+    with open("config.json", "r") as f:
+        return json.load(f)
+
+def enviar_whatsapp(numero: str, mensagem: str):
+    config = carregar_config()
+    base_url = config.get("BASE_URL")
+    instance = config.get("INSTANCE_NAME")
+    token = config.get("EVOLUTION_TOKEN")
+
+    if not all([base_url, instance, token]):
+        print("❌ Erro: Verifique se BASE_URL, INSTANCE_NAME e EVOLUTION_TOKEN estão presentes no config.json")
+        return
+
+    url = f"{base_url}/message/sendText/{instance}"
+    payload = {
+        "number": numero,  
+        "text": mensagem
+    }
+    headers = {
+        "Content-Type": "application/json",
+        "apikey": token
+    }
+
+    try:
+        response = requests.post(url, json=payload, headers=headers)
+        if response.status_code == 200:
+            print("✅ Mensagem enviada com sucesso.")
+        else:
+            print("❌ Erro ao enviar:", response.text)
+    except Exception as e:
+        print("❌ Erro de conexão:", e)
 
 def carregar_precos_produtos():
     if not os.path.exists(ARQUIVO_PRODUTOS):
@@ -25,26 +76,8 @@ precos_produtos = carregar_precos_produtos()
    
 lista_produtos = list(precos_produtos.keys())
 
-# Arquivo contendo as configuracoes de e-mail
-EMAIL_CONFIG_FILE = "config.json"
-
-def carregar_dados_email():
-    """L\u00ea o arquivo JSON com os dados de e-mail."""
-    if not os.path.exists(EMAIL_CONFIG_FILE):
-        messagebox.showerror(
-            "Erro", f"Arquivo {EMAIL_CONFIG_FILE} n\u00e3o encontrado."
-        )
-        return None
-    try:
-        with open(EMAIL_CONFIG_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception as exc:
-        messagebox.showerror("Erro", f"Falha ao ler configura\u00e7\u00f5es: {exc}")
-        return None
-
 class PedidoDB:
-    """Camada simples de persistência usando arquivo Excel."""
-    COLUNAS = ["Data", "Nome", "Produto", "Quantidade", "Pagamento", "Status", "Valor Total"]
+    COLUNAS = ["Data", "Nome", "Telefone", "Produto", "Quantidade", "Pagamento", "Status", "Valor Total"]
     def __init__(self, arquivo: str):
         self.arquivo = arquivo
         self._inicializar()
@@ -53,7 +86,7 @@ class PedidoDB:
             pd.DataFrame(columns=self.COLUNAS).to_excel(self.arquivo, index=False)
     def carregar(self) -> pd.DataFrame:
         self._inicializar()
-        return pd.read_excel(self.arquivo)
+        return pd.read_excel(self.arquivo, dtype={"Telefone": str})
     def salvar(self, df: pd.DataFrame) -> None:
         df.to_excel(self.arquivo, index=False)
     def adicionar(self, pedido: pd.DataFrame) -> None:
@@ -79,6 +112,7 @@ def limpar_estilos():
 
 def limpar_campos():
     entry_nome.delete(0, tk.END)
+    entry_telefone.delete(0, tk.END)
     combo_produto.set('')
     entry_quantidade.delete(0, tk.END)
     combo_pagamento.set('')
@@ -88,6 +122,7 @@ def limpar_campos():
 def cadastrar_pedido():
     limpar_estilos()
     nome = entry_nome.get().strip()
+    telefone = entry_telefone.get().strip()
     produto = combo_produto.get().strip()
     quantidade = entry_quantidade.get().strip()
     pagamento = combo_pagamento.get().strip()
@@ -99,6 +134,8 @@ def cadastrar_pedido():
 
     if not nome:
         campos_invalidos.append(entry_nome)
+    if not telefone:
+        campos_invalidos.append(entry_telefone)
     if not produto:
         campos_invalidos.append(combo_produto)
     if not quantidade:
@@ -129,9 +166,23 @@ def cadastrar_pedido():
 
     valor_total = quantidade_int * preco_unitario
 
-    novo = pd.DataFrame([[data, nome, produto, quantidade_int, pagamento, status, valor_total]],
+    novo = pd.DataFrame([[data, nome, telefone, produto, quantidade_int, pagamento, status, valor_total]],
                         columns=db.COLUNAS)
     db.adicionar(novo)
+
+    numero_formatado = ''.join(filter(str.isdigit, str(telefone)))
+    if len(numero_formatado) == 11:
+        numero_formatado = f"55{numero_formatado}"
+        mensagem = (
+            f"Olá {nome}! Recebemos seu pedido de *{quantidade_int}x {produto}* com sucesso.\n"
+            f"Forma de pagamento: *{pagamento}*.\n"
+            f"Status atual: *{status}*.\n\n"
+            "Obrigado pela preferência! 😊"
+        )
+        enviar_whatsapp(numero_formatado, mensagem)
+    else:
+        print("⚠️ Número de telefone inválido para envio:", telefone)
+
     messagebox.showinfo('Sucesso', 'Pedido cadastrado com sucesso!')
     limpar_campos()
     atualizar_dashboard()
@@ -139,17 +190,37 @@ def cadastrar_pedido():
 def abrir_edicao(idx: int):
     janela = ctk.CTkToplevel(root)
     janela.title('Editar Pedido')
+
     ctk.CTkLabel(janela, text='Status:').grid(row=0, column=0, padx=5, pady=5)
     status_box = ctk.CTkOptionMenu(janela, values=['Em andamento', 'Saiu para entrega', 'Finalizado'])
     status_box.grid(row=0, column=1, padx=5, pady=5)
+
     df = db.carregar()
     status_atual = df.loc[idx, 'Status']
     status_box.set(status_atual)
+
     def salvar_alteracao():
-        db.atualizar(idx, {'Status': status_box.get()})
+        novo_status = status_box.get()
+        db.atualizar(idx, {'Status': novo_status})
+
+        nome = df.loc[idx, 'Nome']
+        produto = df.loc[idx, 'Produto']
+        telefone = df.loc[idx, 'Telefone']
+
+        mensagem = f"Olá {nome}, o status do seu pedido de *{produto}* foi atualizado para: *{novo_status}*."
+
+        if telefone:
+            numero_formatado = ''.join(filter(str.isdigit, str(telefone)))
+            if len(numero_formatado) == 11:
+                numero_formatado = f"55{numero_formatado}"
+                enviar_whatsapp(numero_formatado, mensagem)
+            else:
+                print("⚠️ Número de telefone inválido para envio:", telefone)
+
         janela.destroy()
         visualizar_pedidos()
-    ctk.CTkButton(janela, text='Salvar', command=salvar_alteracao).grid(row=1, column=0, columnspan=2, pady=5)
+
+    ctk.CTkButton(janela, text='Salvar', command=salvar_alteracao).grid(row=1, column=0, columnspan=2, pady=10)
 
 def visualizar_pedidos():
     df = db.carregar()
@@ -188,7 +259,6 @@ def visualizar_pedidos():
     nova_janela.grid_columnconfigure(0, weight=1)
 
 def enviar_email(caminho: str) -> None:
-    """Envia o arquivo informado por e-mail."""
     config = carregar_dados_email()
     if not config:
         return
@@ -239,12 +309,12 @@ def gerar_relatorio():
         "Sucesso", f"Relat\u00f3rio gerado e salvo em {caminho}."
     )
 
-ctk.set_appearance_mode('dark')  # "dark", "light", or "system"
-ctk.set_default_color_theme("blue")  # Tema moderno
+ctk.set_appearance_mode('dark') 
+ctk.set_default_color_theme("blue")  
 
 root = ctk.CTk()
 root.title('Sistema de Pedidos')
-root.geometry('600x480')
+root.geometry('670x620')
 root.resizable(False, False)
 
 # Menu superior
@@ -260,7 +330,7 @@ root.config(menu=menubar)
 container = ctk.CTkFrame(root, corner_radius=15)
 container.pack(padx=30, pady=30, fill='both', expand=True)
 
-# Dashboard - Estatísticas rápidas
+# Dashboard 
 frame_dashboard = ctk.CTkFrame(container, fg_color='transparent')
 frame_dashboard.grid(row=0, column=0, columnspan=2, pady=(10, 5), sticky="ew")
 frame_dashboard.grid_columnconfigure((0, 1, 2), weight=1)
@@ -287,7 +357,6 @@ def atualizar_dashboard():
     produto_top_valor.configure(text=produto_mais_vendido)
 
     df["Valor Total"] = df["Valor Total"].fillna(0)
-
 
 # Widgets dos cartões
 def criar_card(titulo):
@@ -323,6 +392,7 @@ labels = [
 ]
 
 entry_nome = ctk.CTkEntry(container, placeholder_text="Digite o nome")
+entry_telefone = ctk.CTkEntry(container, placeholder_text="(00) 00000-0000")
 combo_produto = ctk.CTkOptionMenu(container, values=lista_produtos)
 combo_produto.set('') 
 entry_quantidade = ctk.CTkEntry(container, placeholder_text="Ex: 2")
@@ -332,6 +402,7 @@ combo_status.set('Em andamento')
 
 campos = [
     (entry_nome, 'Nome do Cliente:'),
+    (entry_telefone, 'Telefone:'),
     (combo_produto, 'Produto:'),
     (entry_quantidade, 'Quantidade:'),
     (combo_pagamento, 'Forma de Pagamento:'),
@@ -346,7 +417,7 @@ for i, (entrada, texto) in enumerate(campos):
 
 # Frame dos botões
 button_frame = ctk.CTkFrame(container, fg_color='transparent')
-button_frame.grid(row=7, column=0, columnspan=2, pady=(25, 10))
+button_frame.grid(row=8, column=0, columnspan=2, pady=(25, 10))
 button_frame.grid_columnconfigure((0, 1, 2), weight=1)
 
 ctk.CTkButton(button_frame, text='Cadastrar Pedido', command=cadastrar_pedido).grid(row=0, column=0, padx=8)
